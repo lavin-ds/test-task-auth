@@ -1,0 +1,74 @@
+version: 2.1
+
+jobs:
+  say-hello:
+    docker:
+      - image: cimg/base:current
+
+    steps:
+      - checkout
+      - run:
+          name: "Say hello"
+          command: "echo Hello, World!"
+
+  check-branch-status:
+    docker:
+      - image: cimg/base:current
+    
+    steps:
+      - checkout
+      - run:
+          name: "Install jq"
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y jq
+      - run:
+          name: "Check last 3 main branch pipelines"
+          command: |
+            if [ -z "$CIRCLE_TOKEN" ]; then
+              echo "ERROR: CIRCLE_TOKEN not set"
+              exit 1
+            fi
+            
+            MAIN_PIPELINES_RESPONSE=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://circleci.com/api/v2/project/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pipeline?branch=main")
+            
+            if ! echo "$MAIN_PIPELINES_RESPONSE" | jq empty 2>/dev/null; then
+              echo "API error: $MAIN_PIPELINES_RESPONSE"
+              exit 1
+            fi
+            
+            FAILED_PIPELINES=()
+            PIPELINE_COUNT=0
+            
+            for pipeline in $(echo "$MAIN_PIPELINES_RESPONSE" | jq -r '.items[0:3][] | @base64'); do
+              PIPELINE_DATA=$(echo "$pipeline" | base64 -d)
+              PIPELINE_STATE=$(echo "$PIPELINE_DATA" | jq -r '.state')
+              PIPELINE_NUMBER=$((PIPELINE_COUNT + 1))
+              
+              echo "Pipeline $PIPELINE_NUMBER: $PIPELINE_STATE"
+              
+              if [ "$PIPELINE_STATE" != "success" ] && [ "$PIPELINE_STATE" != "created" ]; then
+                FAILED_PIPELINES+=("Pipeline $PIPELINE_NUMBER ($PIPELINE_STATE)")
+              fi
+              
+              PIPELINE_COUNT=$((PIPELINE_COUNT + 1))
+            done
+            
+            if [ ${#FAILED_PIPELINES[@]} -eq 0 ]; then
+              echo "[SUCCESS] All last 3 main branch pipelines passed!"
+              exit 0
+            else
+              echo "[FAILED] Some main branch pipelines failed:"
+              printf '%s\n' "${FAILED_PIPELINES[@]}"
+              exit 1
+            fi
+
+workflows:
+  main-pipeline-check:
+    jobs:
+      - check-branch-status:
+          context: test-task
+      - say-hello:
+          requires:
+            - check-branch-status
