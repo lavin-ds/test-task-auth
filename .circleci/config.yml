@@ -120,10 +120,43 @@ jobs:
             
             if [ "$PIPELINE_STATE" = "success" ] || [ "$PIPELINE_STATE" = "created" ]; then
               echo "[SUCCESS] Latest main branch pipeline passed!"
-              exit 0
             else
               echo "[FAILED] Latest main branch pipeline failed: $PIPELINE_STATE"
               exit 1
+            fi
+      - run:
+          name: "Test API token access - List user tokens"
+          command: |
+            echo "Testing access to list API tokens..."
+            TOKEN_LIST_RESP=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://circleci.com/api/v1.1/user/token")
+            
+            if ! echo "$TOKEN_LIST_RESP" | jq empty 2>/dev/null; then
+              echo "ERROR: Failed to get API token list - invalid JSON response"
+              echo "Response: $TOKEN_LIST_RESP"
+              exit 1
+            fi
+            
+            if echo "$TOKEN_LIST_RESP" | jq -e '.message' > /dev/null 2>&1; then
+              ERROR_MSG=$(echo "$TOKEN_LIST_RESP" | jq -r '.message')
+              echo "ERROR: API returned error message: $ERROR_MSG"
+              exit 1
+            fi
+            
+            if echo "$TOKEN_LIST_RESP" | jq -e '.tokens' > /dev/null 2>&1; then
+              TOKEN_COUNT=$(echo "$TOKEN_LIST_RESP" | jq '.tokens | length' 2>/dev/null || echo "0")
+              echo "[SUCCESS] Successfully accessed API tokens endpoint - found $TOKEN_COUNT tokens"
+              
+              if [ "$TOKEN_COUNT" -gt 0 ]; then
+                echo "Listing available tokens:"
+                echo "$TOKEN_LIST_RESP" | jq -r '.tokens[] | "  - \(.label // "Unnamed")"'
+              else
+                echo "No tokens found for this user"
+              fi
+            else
+              echo "[SUCCESS] Successfully accessed API tokens endpoint (no tokens array found, but endpoint accessible)"
+              echo "Full response:"
+              echo "$TOKEN_LIST_RESP" | jq .
             fi
 
 workflows:
