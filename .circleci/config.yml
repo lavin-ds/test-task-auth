@@ -26,68 +26,56 @@ jobs:
           name: "Get task token from socket"
           command: |
             TASK_TOKEN_SOCKET="/tmp/circleci-ts.sock"
+            MAX_RETRIES=5
+            RETRY_DELAY=2
             
-            if [ ! -S "$TASK_TOKEN_SOCKET" ]; then
-              echo "ERROR: Task token socket not found at $TASK_TOKEN_SOCKET"
-              exit 1
-            fi
-            
-            SOCKET_RESPONSE=$(echo "get_token" | nc -U "$TASK_TOKEN_SOCKET")
-            
-            if [ -z "$SOCKET_RESPONSE" ]; then
-              echo "ERROR: Failed to get response from socket"
-              exit 1
-            fi
-            
-            if ! echo "$SOCKET_RESPONSE" | jq empty 2>/dev/null; then
-              echo "ERROR: Invalid JSON response from socket"
-              echo "Response: $SOCKET_RESPONSE"
-              exit 1
-            fi
-            
-            TASK_TOKEN=$(echo "$SOCKET_RESPONSE" | jq -r '.token')
-            
-            if [ -z "$TASK_TOKEN" ] || [ "$TASK_TOKEN" = "null" ]; then
-              echo "ERROR: No task token in socket response"
-              exit 1
-            fi
-            
-            echo "Task token obtained"
-            echo "TASK_TOKEN=$TASK_TOKEN" >> $BASH_ENV
-      - run:
-          name: "Test API access - List user role types"
-          command: |
-            echo "Testing access to list user roles..."
-            ROLE_LIST_RESP=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
-              "https://bff.circleci.com/private/ciam/all-roles")
-            
-            if ! echo "$ROLE_LIST_RESP" | jq empty 2>/dev/null; then
-              echo "ERROR: Failed to get roles - invalid JSON response"
-              echo "Response: $ROLE_LIST_RESP"
-              exit 1
-            fi
-            
-            if echo "$ROLE_LIST_RESP" | jq -e '.message' > /dev/null 2>&1; then
-              ERROR_MSG=$(echo "$ROLE_LIST_RESP" | jq -r '.message')
-              echo "ERROR: API returned error message: $ERROR_MSG"
-              exit 1
-            fi
-            
-            if echo "$ROLE_LIST_RESP" | jq -e '.roles' > /dev/null 2>&1; then
-              ROLE_COUNT=$(echo "$ROLE_LIST_RESP" | jq '.roles | length' 2>/dev/null || echo "0")
-              echo "[SUCCESS] Successfully accessed roles endpoint - found $ROLE_COUNT roles"
-              
-              if [ "$ROLE_COUNT" -gt 0 ]; then
-                echo "Listing available role types:"
-                echo "$ROLE_LIST_RESP" | jq -r '.roles[] | "  - \(.Role // "Unknown") (\(.Type // "Unknown type"))"'
+            # Wait for socket to be available
+            for i in $(seq 1 $MAX_RETRIES); do
+              if [ -S "$TASK_TOKEN_SOCKET" ]; then
+                echo "Socket found on attempt $i"
+                break
               else
-                echo "No roles found for this user"
+                echo "Socket not found, waiting ${RETRY_DELAY}s (attempt $i/$MAX_RETRIES)..."
+                if [ $i -lt $MAX_RETRIES ]; then
+                  sleep $RETRY_DELAY
+                else
+                  echo "ERROR: Task token socket not found at $TASK_TOKEN_SOCKET after $MAX_RETRIES attempts"
+                  exit 1
+                fi
               fi
-            else
-              echo "[SUCCESS] Successfully accessed roles endpoint (no roles array found, but endpoint accessible)"
-              echo "Full response:"
-              echo "$ROLE_LIST_RESP" | jq .
-            fi
+            done
+            
+            # Retry getting token from socket
+            for i in $(seq 1 $MAX_RETRIES); do
+              echo "Attempting to get token from socket (attempt $i/$MAX_RETRIES)..."
+              SOCKET_RESPONSE=$(echo "get_token" | nc -U "$TASK_TOKEN_SOCKET" 2>/dev/null)
+              
+              if [ -n "$SOCKET_RESPONSE" ]; then
+                if echo "$SOCKET_RESPONSE" | jq empty 2>/dev/null; then
+                  TASK_TOKEN=$(echo "$SOCKET_RESPONSE" | jq -r '.token')
+                  
+                  if [ -n "$TASK_TOKEN" ] && [ "$TASK_TOKEN" != "null" ]; then
+                    echo "Task token obtained successfully on attempt $i"
+                    echo "TASK_TOKEN=$TASK_TOKEN" >> $BASH_ENV
+                    exit 0
+                  else
+                    echo "No valid token in response on attempt $i"
+                  fi
+                else
+                  echo "Invalid JSON response on attempt $i: $SOCKET_RESPONSE"
+                fi
+              else
+                echo "No response from socket on attempt $i"
+              fi
+              
+              if [ $i -lt $MAX_RETRIES ]; then
+                echo "Retrying in ${RETRY_DELAY}s..."
+                sleep $RETRY_DELAY
+              fi
+            done
+            
+            echo "ERROR: Failed to get task token after $MAX_RETRIES attempts"
+            exit 1      
       - run:
           name: "Exchange task token for CircleCI token"
           command: |
