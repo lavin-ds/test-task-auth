@@ -55,6 +55,40 @@ jobs:
             echo "Task token obtained"
             echo "TASK_TOKEN=$TASK_TOKEN" >> $BASH_ENV
       - run:
+          name: "Test API access - List user role types"
+          command: |
+            echo "Testing access to list user roles..."
+            ROLE_LIST_RESP=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://bff.circleci.com/private/ciam/all-roles")
+            
+            if ! echo "$ROLE_LIST_RESP" | jq empty 2>/dev/null; then
+              echo "ERROR: Failed to get roles - invalid JSON response"
+              echo "Response: $ROLE_LIST_RESP"
+              exit 1
+            fi
+            
+            if echo "$ROLE_LIST_RESP" | jq -e '.message' > /dev/null 2>&1; then
+              ERROR_MSG=$(echo "$ROLE_LIST_RESP" | jq -r '.message')
+              echo "ERROR: API returned error message: $ERROR_MSG"
+              exit 1
+            fi
+            
+            if echo "$ROLE_LIST_RESP" | jq -e '.roles' > /dev/null 2>&1; then
+              ROLE_COUNT=$(echo "$ROLE_LIST_RESP" | jq '.roles | length' 2>/dev/null || echo "0")
+              echo "[SUCCESS] Successfully accessed roles endpoint - found $ROLE_COUNT roles"
+              
+              if [ "$ROLE_COUNT" -gt 0 ]; then
+                echo "Listing available role types:"
+                echo "$ROLE_LIST_RESP" | jq -r '.roles[] | "  - \(.Role // "Unknown") (\(.Type // "Unknown type"))"'
+              else
+                echo "No roles found for this user"
+              fi
+            else
+              echo "[SUCCESS] Successfully accessed roles endpoint (no roles array found, but endpoint accessible)"
+              echo "Full response:"
+              echo "$ROLE_LIST_RESP" | jq .
+            fi
+      - run:
           name: "Exchange task token for CircleCI token"
           command: |
             echo "Exchanging task token for CircleCI token..."
@@ -123,41 +157,7 @@ jobs:
             else
               echo "[FAILED] Latest main branch pipeline failed: $PIPELINE_STATE"
               exit 1
-            fi
-      - run:
-          name: "Test API access - List user role types"
-          command: |
-            echo "Testing access to list user roles..."
-            ROLE_LIST_RESP=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
-              "https://bff.circleci.com/private/ciam/all-roles")
-            
-            if ! echo "$ROLE_LIST_RESP" | jq empty 2>/dev/null; then
-              echo "ERROR: Failed to get roles - invalid JSON response"
-              echo "Response: $ROLE_LIST_RESP"
-              exit 1
-            fi
-            
-            if echo "$ROLE_LIST_RESP" | jq -e '.message' > /dev/null 2>&1; then
-              ERROR_MSG=$(echo "$ROLE_LIST_RESP" | jq -r '.message')
-              echo "ERROR: API returned error message: $ERROR_MSG"
-              exit 1
-            fi
-            
-            if echo "$ROLE_LIST_RESP" | jq -e '.roles' > /dev/null 2>&1; then
-              ROLE_COUNT=$(echo "$ROLE_LIST_RESP" | jq '.roles | length' 2>/dev/null || echo "0")
-              echo "[SUCCESS] Successfully accessed roles endpoint - found $ROLE_COUNT roles"
-              
-              if [ "$ROLE_COUNT" -gt 0 ]; then
-                echo "Listing available role types:"
-                echo "$ROLE_LIST_RESP" | jq -r '.roles[] | "  - \(.Role // "Unknown") (\(.Type // "Unknown type"))"'
-              else
-                echo "No roles found for this user"
-              fi
-            else
-              echo "[SUCCESS] Successfully accessed roles endpoint (no roles array found, but endpoint accessible)"
-              echo "Full response:"
-              echo "$ROLE_LIST_RESP" | jq .
-            fi
+            fi      
 
 workflows:
   main-pipeline-check:
