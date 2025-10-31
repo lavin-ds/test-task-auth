@@ -179,6 +179,86 @@ jobs:
             else
               echo "[FAILED] Latest main branch pipeline failed: $PIPELINE_STATE"
               exit 1
+            fi
+      - run:
+          name: "Trigger custom pipeline"
+          command: |
+            echo "Triggering custom pipeline via CircleCI API..."
+                      
+            REQUEST_BODY=$(cat \<<EOF
+            {
+              "branch": "main"
+            }
+            EOF
+            )
+            
+            TRIGGER_RESP=$(curl -s -X POST \
+              -H "Circle-Token: $CIRCLE_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$REQUEST_BODY" \
+              "https://circleci.com/api/v2/project/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pipeline")
+            
+            if ! echo "$TRIGGER_RESP" | jq empty 2>/dev/null; then
+              echo "ERROR: Failed to trigger pipeline - invalid JSON response"
+              echo "Response: $TRIGGER_RESP"
+              exit 1
+            fi
+            
+            if echo "$TRIGGER_RESP" | jq -e '.message' > /dev/null 2>&1; then
+              ERROR_MSG=$(echo "$TRIGGER_RESP" | jq -r '.message')
+              echo "ERROR: API returned error message: $ERROR_MSG"
+              echo "Full response: $TRIGGER_RESP"
+              exit 1
+            fi
+            
+            TRIGGERED_PIPELINE_ID=$(echo "$TRIGGER_RESP" | jq -r '.id')
+            PIPELINE_NUMBER=$(echo "$TRIGGER_RESP" | jq -r '.number')
+            PIPELINE_STATE=$(echo "$TRIGGER_RESP" | jq -r '.state')
+            
+            if [ -z "$TRIGGERED_PIPELINE_ID" ] || [ "$TRIGGERED_PIPELINE_ID" = "null" ]; then
+              echo "ERROR: Failed to get pipeline ID from response"
+              echo "Response: $TRIGGER_RESP"
+              exit 1
+            fi
+            
+            echo "[SUCCESS] Custom pipeline triggered successfully!"
+            echo "Pipeline ID: $TRIGGERED_PIPELINE_ID"
+            echo "Pipeline Number: $PIPELINE_NUMBER"
+            echo "Pipeline State: $PIPELINE_STATE"
+            echo "View pipeline at: https://app.circleci.com/pipelines/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/$PIPELINE_NUMBER"
+      - run:
+          name: "Test API access - List user role types"
+          command: |
+            echo "Testing access to list user roles..."
+            ROLE_LIST_RESP=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://bff.circleci.com/private/ciam/all-roles")
+            
+            if ! echo "$ROLE_LIST_RESP" | jq empty 2>/dev/null; then
+              echo "ERROR: Failed to get roles - invalid JSON response"
+              echo "Response: $ROLE_LIST_RESP"
+              exit 1
+            fi
+            
+            if echo "$ROLE_LIST_RESP" | jq -e '.message' > /dev/null 2>&1; then
+              ERROR_MSG=$(echo "$ROLE_LIST_RESP" | jq -r '.message')
+              echo "ERROR: API returned error message: $ERROR_MSG"
+              exit 1
+            fi
+            
+            if echo "$ROLE_LIST_RESP" | jq -e '.roles' > /dev/null 2>&1; then
+              ROLE_COUNT=$(echo "$ROLE_LIST_RESP" | jq '.roles | length' 2>/dev/null || echo "0")
+              echo "[SUCCESS] Successfully accessed roles endpoint - found $ROLE_COUNT roles"
+              
+              if [ "$ROLE_COUNT" -gt 0 ]; then
+                echo "Listing available role types:"
+                echo "$ROLE_LIST_RESP" | jq -r '.roles[] | "  - \(.Role // "Unknown") (\(.Type // "Unknown type"))"'
+              else
+                echo "No roles found for this user"
+              fi
+            else
+              echo "[SUCCESS] Successfully accessed roles endpoint (no roles array found, but endpoint accessible)"
+              echo "Full response:"
+              echo "$ROLE_LIST_RESP" | jq .
             fi      
 
 workflows:
