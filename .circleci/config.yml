@@ -185,12 +185,7 @@ jobs:
           command: |
             echo "Triggering custom pipeline via CircleCI API..."
                       
-            REQUEST_BODY=$(cat \<<EOF
-            {
-              "branch": "main"
-            }
-            EOF
-            )
+            REQUEST_BODY='{"branch": "main"}'
             
             TRIGGER_RESP=$(curl -s -X POST \
               -H "Circle-Token: $CIRCLE_TOKEN" \
